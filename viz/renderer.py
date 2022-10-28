@@ -16,9 +16,10 @@ import torch.nn
 import matplotlib.cm
 import dnnlib
 from torch_utils.ops import upfirdn2d
-import legacy # pylint: disable=import-error
+import legacy  # pylint: disable=import-error
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+
 
 class CapturedException(Exception):
     def __init__(self, msg=None):
@@ -32,25 +33,32 @@ class CapturedException(Exception):
         assert isinstance(msg, str)
         super().__init__(msg)
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+
 
 class CaptureSuccess(Exception):
     def __init__(self, out):
         super().__init__()
         self.out = out
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+
 
 def _sinc(x):
     y = (x * np.pi).abs()
-    z = torch.sin(y) / y.clamp(1e-30, float('inf'))
+    z = torch.sin(y) / y.clamp(1e-30, float("inf"))
     return torch.where(y < 1e-30, torch.ones_like(x), z)
+
 
 def _lanczos_window(x, a):
     x = x.abs() / a
     return torch.where(x < 1, _sinc(x), torch.zeros_like(x))
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+
 
 def _construct_affine_bandlimit_filter(mat, a=3, amax=16, aflt=64, up=4, cutoff_in=1, cutoff_out=1):
     assert a <= amax < aflt
@@ -76,13 +84,15 @@ def _construct_affine_bandlimit_filter(mat, a=3, amax=16, aflt=64, up=4, cutoff_
 
     # Finalize.
     c = (aflt - amax) * up
-    f = f.roll([aflt * up - 1] * 2, dims=[0,1])[c:-c, c:-c]
+    f = f.roll([aflt * up - 1] * 2, dims=[0, 1])[c:-c, c:-c]
     f = torch.nn.functional.pad(f, [0, 1, 0, 1]).reshape(amax * 2, up, amax * 2, up)
-    f = f / f.sum([0,2], keepdim=True) / (up ** 2)
+    f = f / f.sum([0, 2], keepdim=True) / (up**2)
     f = f.reshape(amax * 2 * up, amax * 2 * up)[:-1, :-1]
     return f
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+
 
 def _apply_affine_transformation(x, mat, up=4, **filter_kwargs):
     _N, _C, H, W = x.shape
@@ -105,28 +115,30 @@ def _apply_affine_transformation(x, mat, up=4, **filter_kwargs):
 
     # Resample image.
     y = upfirdn2d.upsample2d(x=x, f=f, up=up, padding=p)
-    z = torch.nn.functional.grid_sample(y, g, mode='bilinear', padding_mode='zeros', align_corners=False)
+    z = torch.nn.functional.grid_sample(y, g, mode="bilinear", padding_mode="zeros", align_corners=False)
 
     # Form mask.
     m = torch.zeros_like(y)
     c = p * 2 + 1
     m[:, :, c:-c, c:-c] = 1
-    m = torch.nn.functional.grid_sample(m, g, mode='nearest', padding_mode='zeros', align_corners=False)
+    m = torch.nn.functional.grid_sample(m, g, mode="nearest", padding_mode="zeros", align_corners=False)
     return z, m
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+
 
 class Renderer:
     def __init__(self):
-        self._device        = torch.device('cuda')
-        self._pkl_data      = dict()    # {pkl: dict | CapturedException, ...}
-        self._networks      = dict()    # {cache_key: torch.nn.Module, ...}
-        self._pinned_bufs   = dict()    # {(shape, dtype): torch.Tensor, ...}
-        self._cmaps         = dict()    # {name: torch.Tensor, ...}
-        self._is_timing     = False
-        self._start_event   = torch.cuda.Event(enable_timing=True)
-        self._end_event     = torch.cuda.Event(enable_timing=True)
-        self._net_layers    = dict()    # {cache_key: [dnnlib.EasyDict, ...], ...}
+        self._device = torch.device("cuda")
+        self._pkl_data = dict()  # {pkl: dict | CapturedException, ...}
+        self._networks = dict()  # {cache_key: torch.nn.Module, ...}
+        self._pinned_bufs = dict()  # {(shape, dtype): torch.Tensor, ...}
+        self._cmaps = dict()  # {name: torch.Tensor, ...}
+        self._is_timing = False
+        self._start_event = torch.cuda.Event(enable_timing=True)
+        self._end_event = torch.cuda.Event(enable_timing=True)
+        self._net_layers = dict()  # {cache_key: [dnnlib.EasyDict, ...], ...}
 
     def render(self, **args):
         self._is_timing = True
@@ -137,11 +149,11 @@ class Renderer:
         except:
             res.error = CapturedException()
         self._end_event.record(torch.cuda.current_stream(self._device))
-        if 'image' in res:
+        if "image" in res:
             res.image = self.to_cpu(res.image).numpy()
-        if 'stats' in res:
+        if "stats" in res:
             res.stats = self.to_cpu(res.stats).numpy()
-        if 'error' in res:
+        if "error" in res:
             res.error = str(res.error)
         if self._is_timing:
             self._end_event.synchronize()
@@ -152,14 +164,14 @@ class Renderer:
     def get_network(self, pkl, key, **tweak_kwargs):
         data = self._pkl_data.get(pkl, None)
         if data is None:
-            print(f'Loading "{pkl}"... ', end='', flush=True)
+            print(f'Loading "{pkl}"... ', end="", flush=True)
             try:
                 with dnnlib.util.open_url(pkl, verbose=False) as f:
                     data = legacy.load_network_pkl(f)
-                print('Done.')
+                print("Done.")
             except:
                 data = CapturedException()
-                print('Failed!')
+                print("Failed!")
             self._pkl_data[pkl] = data
             self._ignore_timing()
         if isinstance(data, CapturedException):
@@ -183,7 +195,7 @@ class Renderer:
 
     def _tweak_network(self, net):
         # Print diagnostics.
-        #for name, value in misc.named_params_and_buffers(net):
+        # for name, value in misc.named_params_and_buffers(net):
         #    if name.endswith('.magnitude_ema'):
         #        value = value.rsqrt().numpy()
         #        print(f'{name:<50s}{np.min(value):<16g}{np.max(value):g}')
@@ -209,7 +221,7 @@ class Renderer:
     def _ignore_timing(self):
         self._is_timing = False
 
-    def _apply_cmap(self, x, name='viridis'):
+    def _apply_cmap(self, x, name="viridis"):
         cmap = self._cmaps.get(name, None)
         if cmap is None:
             cmap = matplotlib.cm.get_cmap(name)
@@ -221,34 +233,36 @@ class Renderer:
         x = torch.nn.functional.embedding(x, cmap)
         return x
 
-    def _render_impl(self, res,
-        pkl             = None,
-        w0_seeds        = [[0, 1]],
-        stylemix_idx    = [],
-        stylemix_seed   = 0,
-        trunc_psi       = 1,
-        trunc_cutoff    = 0,
-        random_seed     = 0,
-        noise_mode      = 'const',
-        force_fp32      = False,
-        layer_name      = None,
-        sel_channels    = 3,
-        base_channel    = 0,
-        img_scale_db    = 0,
-        img_normalize   = False,
-        fft_show        = False,
-        fft_all         = True,
-        fft_range_db    = 50,
-        fft_beta        = 8,
-        input_transform = None,
-        untransform     = False,
+    def _render_impl(
+        self,
+        res,
+        pkl=None,
+        w0_seeds=[[0, 1]],
+        stylemix_idx=[],
+        stylemix_seed=0,
+        trunc_psi=1,
+        trunc_cutoff=0,
+        random_seed=0,
+        noise_mode="const",
+        force_fp32=False,
+        layer_name=None,
+        sel_channels=3,
+        base_channel=0,
+        img_scale_db=0,
+        img_normalize=False,
+        fft_show=False,
+        fft_all=True,
+        fft_range_db=50,
+        fft_beta=8,
+        input_transform=None,
+        untransform=False,
     ):
         # Dig up network details.
-        G = self.get_network(pkl, 'G_ema')
+        G = self.get_network(pkl, "G_ema")
         res.img_resolution = G.img_resolution
         res.num_ws = G.num_ws
-        res.has_noise = any('noise_const' in name for name, _buf in G.synthesis.named_buffers())
-        res.has_input_transform = (hasattr(G.synthesis, 'input') and hasattr(G.synthesis.input, 'transform'))
+        res.has_noise = any("noise_const" in name for name, _buf in G.synthesis.named_buffers())
+        res.has_input_transform = hasattr(G.synthesis, "input") and hasattr(G.synthesis.input, "transform")
 
         # Set input transform.
         if res.has_input_transform:
@@ -301,7 +315,9 @@ class Renderer:
 
         # Untransform.
         if untransform and res.has_input_transform:
-            out, _mask = _apply_affine_transformation(out.to(torch.float32), G.synthesis.input.transform, amax=6) # Override amax to hit the fast path in upfirdn2d.
+            out, _mask = _apply_affine_transformation(
+                out.to(torch.float32), G.synthesis.input.transform, amax=6
+            )  # Override amax to hit the fast path in upfirdn2d.
 
         # Select channels and compute statistics.
         out = out[0].to(torch.float32)
@@ -309,16 +325,21 @@ class Renderer:
             sel_channels = 1
         base_channel = max(min(base_channel, out.shape[0] - sel_channels), 0)
         sel = out[base_channel : base_channel + sel_channels]
-        res.stats = torch.stack([
-            out.mean(), sel.mean(),
-            out.std(), sel.std(),
-            out.norm(float('inf')), sel.norm(float('inf')),
-        ])
+        res.stats = torch.stack(
+            [
+                out.mean(),
+                sel.mean(),
+                out.std(),
+                sel.std(),
+                out.norm(float("inf")),
+                sel.norm(float("inf")),
+            ]
+        )
 
         # Scale and convert to uint8.
         img = sel
         if img_normalize:
-            img = img / img.norm(float('inf'), dim=[1,2], keepdim=True).clip(1e-8, 1e8)
+            img = img / img.norm(float("inf"), dim=[1, 2], keepdim=True).clip(1e-8, 1e8)
         img = img * (10 ** (img_scale_db / 20))
         img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8).permute(1, 2, 0)
         res.image = img
@@ -327,17 +348,23 @@ class Renderer:
         if fft_show:
             sig = out if fft_all else sel
             sig = sig.to(torch.float32)
-            sig = sig - sig.mean(dim=[1,2], keepdim=True)
-            sig = sig * torch.kaiser_window(sig.shape[1], periodic=False, beta=fft_beta, device=self._device)[None, :, None]
-            sig = sig * torch.kaiser_window(sig.shape[2], periodic=False, beta=fft_beta, device=self._device)[None, None, :]
-            fft = torch.fft.fftn(sig, dim=[1,2]).abs().square().sum(dim=0)
-            fft = fft.roll(shifts=[fft.shape[0] // 2, fft.shape[1] // 2], dims=[0,1])
-            fft = (fft / fft.mean()).log10() * 10 # dB
+            sig = sig - sig.mean(dim=[1, 2], keepdim=True)
+            sig = (
+                sig
+                * torch.kaiser_window(sig.shape[1], periodic=False, beta=fft_beta, device=self._device)[None, :, None]
+            )
+            sig = (
+                sig
+                * torch.kaiser_window(sig.shape[2], periodic=False, beta=fft_beta, device=self._device)[None, None, :]
+            )
+            fft = torch.fft.fftn(sig, dim=[1, 2]).abs().square().sum(dim=0)
+            fft = fft.roll(shifts=[fft.shape[0] // 2, fft.shape[1] // 2], dims=[0, 1])
+            fft = (fft / fft.mean()).log10() * 10  # dB
             fft = self._apply_cmap((fft / fft_range_db + 1) / 2)
             res.image = torch.cat([img.expand_as(fft), fft], dim=1)
 
     @staticmethod
-    def run_synthesis_net(net, *args, capture_layer=None, **kwargs): # => out, layers
+    def run_synthesis_net(net, *args, capture_layer=None, **kwargs):  # => out, layers
         submodule_names = {mod: name for name, mod in net.named_modules()}
         unique_names = set()
         layers = []
@@ -346,21 +373,21 @@ class Renderer:
             outputs = list(outputs) if isinstance(outputs, (tuple, list)) else [outputs]
             outputs = [out for out in outputs if isinstance(out, torch.Tensor) and out.ndim in [4, 5]]
             for idx, out in enumerate(outputs):
-                if out.ndim == 5: # G-CNN => remove group dimension.
+                if out.ndim == 5:  # G-CNN => remove group dimension.
                     out = out.mean(2)
                 name = submodule_names[module]
-                if name == '':
-                    name = 'output'
+                if name == "":
+                    name = "output"
                 if len(outputs) > 1:
-                    name += f':{idx}'
+                    name += f":{idx}"
                 if name in unique_names:
                     suffix = 2
-                    while f'{name}_{suffix}' in unique_names:
+                    while f"{name}_{suffix}" in unique_names:
                         suffix += 1
-                    name += f'_{suffix}'
+                    name += f"_{suffix}"
                 unique_names.add(name)
                 shape = [int(x) for x in out.shape]
-                dtype = str(out.dtype).split('.')[-1]
+                dtype = str(out.dtype).split(".")[-1]
                 layers.append(dnnlib.EasyDict(name=name, shape=shape, dtype=dtype))
                 if name == capture_layer:
                     raise CaptureSuccess(out)
@@ -374,4 +401,5 @@ class Renderer:
             hook.remove()
         return out, layers
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
